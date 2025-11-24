@@ -1,0 +1,21 @@
+# .gitignore (Root)
+
+# Dependency
+node_modules
+
+# Environment Variables (SANGAT PENTING: JANGAN DI-PUSH)
+.env
+.env.local
+.env.*
+
+# OS Generated files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode
+.idea
+
+# Docker volumes (jika ada folder data lokal)
+postgres_data
+redis_data
