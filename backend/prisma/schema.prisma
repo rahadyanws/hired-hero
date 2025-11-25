@@ -1,0 +1,224 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- ENUMS (Standardized Options) ---
+
+enum Role {
+  ADMIN
+  CANDIDATE
+  RECRUITER
+}
+
+enum JobType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  FREELANCE
+  INTERNSHIP
+}
+
+enum WorkMode {
+  ONSITE
+  REMOTE
+  HYBRID
+}
+
+enum ApplicationStatus {
+  APPLIED        // Baru masuk
+  AI_PROCESSING  // Sedang dinilai oleh AI Worker
+  AI_REVIEWED    // Selesai dinilai, menunggu recruiter
+  SHORTLISTED    // Recruiter tertarik
+  INTERVIEW      // Dijadwalkan wawancara
+  OFFERED        // Ditawari pekerjaan
+  HIRED          // Diterima
+  REJECTED       // Ditolak
+}
+
+enum NotificationType {
+  INFO
+  SUCCESS
+  WARNING
+  ERROR
+}
+
+// --- CORE USER MANAGEMENT ---
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String   // Hashed password
+  role      Role     @default(CANDIDATE)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relasi ke Profil Spesifik
+  candidateProfile CandidateProfile?
+  recruiterProfile RecruiterProfile?
+
+  // Relasi Notifikasi (Penerima)
+  notifications    Notification[]
+
+  @@map("users")
+}
+
+model CandidateProfile {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  fullName    String
+  headline    String?  // e.g. "Senior Backend Engineer"
+  phone       String?
+  resumeUrl   String?  // Link ke PDF di S3/Cloud Storage
+  skills      String[] // Array of strings: ["Node.js", "React"]
+  
+  // Data untuk RAG & Search
+  bio         String?  @db.Text
+  experience  Json?    // Struktur fleksibel untuk riwayat kerja
+  education   Json?    // Struktur fleksibel untuk pendidikan
+  
+  // Flag sinkronisasi Vector DB
+  vectorId    String?  // ID di Qdrant (jika sudah di-ingest)
+  lastIngestedAt DateTime? 
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  applications Application[]
+
+  @@map("candidate_profiles")
+}
+
+model RecruiterProfile {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  fullName    String
+  position    String?  // e.g. "HR Manager"
+  
+  // Relasi ke Perusahaan
+  companyId   String?
+  company     Company? @relation(fields: [companyId], references: [id])
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  postedJobs  Job[]
+
+  @@map("recruiter_profiles")
+}
+
+model Company {
+  id          String   @id @default(uuid())
+  name        String
+  description String?  @db.Text
+  logoUrl     String?
+  websiteUrl  String?
+  location    String?
+  
+  recruiters  RecruiterProfile[]
+  jobs        Job[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("companies")
+}
+
+// --- JOB MANAGEMENT ---
+
+model Job {
+  id          String   @id @default(uuid())
+  title       String
+  description String   @db.Text // HTML/Markdown content
+  requirements String? @db.Text // Specific requirements for AI analysis
+  
+  type        JobType  @default(FULL_TIME)
+  workMode    WorkMode @default(ONSITE)
+  location    String?
+  salaryRange String?  // e.g. "1000-2000 USD"
+  
+  isActive    Boolean  @default(true)
+  
+  // Data untuk RAG Matching
+  vectorId    String?  // ID di Qdrant (untuk pencarian semantik)
+  
+  // Relasi
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id])
+  
+  recruiterId String
+  recruiter   RecruiterProfile @relation(fields: [recruiterId], references: [id])
+
+  applications Application[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("jobs")
+}
+
+// --- APPLICATION & AI ASSESSMENT ---
+
+model Application {
+  id          String            @id @default(uuid())
+  status      ApplicationStatus @default(APPLIED)
+  
+  // Relasi
+  jobId       String
+  job         Job               @relation(fields: [jobId], references: [id])
+  
+  candidateId String
+  candidate   CandidateProfile  @relation(fields: [candidateId], references: [id])
+  
+  // Snapshot data saat melamar (penting jika profil berubah nanti)
+  resumeUrlSnapshot String? 
+
+  // --- AI Assessment Results (Hasil Evaluasi Otomatis) ---
+  // Diisi oleh AI Worker setelah proses selesai
+  aiScore         Float?    // 0-100
+  aiSummary       String?   @db.Text // Ringkasan "Why hire this person?"
+  aiPros          String?   @db.Text // Poin plus
+  aiCons          String?   @db.Text // Poin minus
+  aiTechnicalMatch Float?   // 0-100
+  aiCulturalMatch  Float?   // 0-100
+  
+  // Menyimpan JSON detail jika butuh data mentah dari LLM
+  aiRawResponse   Json?     
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Constraint: Satu kandidat hanya bisa melamar sekali per job
+  @@unique([jobId, candidateId])
+  @@map("applications")
+}
+
+// --- NOTIFICATIONS SYSTEM ---
+
+model Notification {
+  id        String   @id @default(uuid())
+  
+  // Penerima
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title     String
+  message   String   @db.Text
+  type      NotificationType @default(INFO)
+  
+  isRead    Boolean  @default(false)
+  actionUrl String?  // Link frontend: "/jobs/123" atau "/applications/456"
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead]) // Index untuk performa query "Unread Count"
+  @@map("notifications")
+}
