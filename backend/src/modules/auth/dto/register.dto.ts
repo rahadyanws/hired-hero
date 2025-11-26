@@ -4,6 +4,8 @@ import {
   IsString,
   MinLength,
   IsEnum,
+  IsOptional,
+  ValidateIf,
 } from 'class-validator';
 import { Role } from '../../../../generated/prisma/client';
 
@@ -14,7 +16,7 @@ export class RegisterDto {
 
   @IsString()
   @IsNotEmpty()
-  @MinLength(6, { message: 'Password must be at least 6 characters' })
+  @MinLength(6)
   password: string;
 
   @IsNotEmpty()
@@ -22,5 +24,16 @@ export class RegisterDto {
   fullName: string;
 
   @IsEnum(Role)
-  role: Role; // 'CANDIDATE' atau 'RECRUITER'
+  role: Role;
+
+  // --- Logic Baru: Company Info ---
+  // Field ini Wajib jika Role = RECRUITER
+  @ValidateIf((o) => o.role === 'RECRUITER')
+  @IsNotEmpty({ message: 'Nama Perusahaan wajib diisi untuk Recruiter' })
+  @IsString()
+  companyName?: string;
+
+  @IsOptional()
+  @IsString()
+  companyWebsite?: string;
 }

@@ -18,10 +18,10 @@ export class DatabaseService
     try {
       await this.$connect();
       // 2. Log Sukses
-      this.logger.log(' ✅ Database connection established successfully');
+      this.logger.log('✅ Database connection established successfully');
     } catch (error) {
       // 3. Log Error Fatal
-      this.logger.error(' ❎ Failed to connect to database', error.stack);
+      this.logger.error('❎ Failed to connect to database', error.stack);
       throw error;
     }
   }
